@@ -6,16 +6,48 @@
 #define TILE_SIZE 30
 
 __global__ void kernel(int *A0, int *Anext, int nx, int ny, int nz) {
+  #define in(i, j, k) A0[((k)*ny + (j))*nx + (i)]
+  #define out(i, j, k) Anext[((k)*ny + (j))*nx + (i)]
 
-  // INSERT KERNEL CODE HERE
-  
+  // INSERT CODE HERE
+  int bx = blockIdx.x;
+  int by = blockIdx.y;
+  int tx = threadIdx.x;
+  int ty = threadIdx.y;
 
+  int i = bx * TILE_SIZE + tx;
+  int j = by * TILE_SIZE + ty;
+
+  if(i >= 1 && i < nx - 1 && j >= 1 && j < ny - 1)
+  {
+    int prev = 0;
+    int cur = in(i, j, 0);
+    int next = in(i, j, 1);
+
+    for(int k = 1 ; k < nz - 1 ; k ++)
+    { 
+      prev = cur;
+      cur = next;
+      next = in(i, j, k + 1);
+
+      out(i, j, k) = -6 * cur 
+                      + prev 
+                      + next
+                      + in(i - 1, j, k) 
+                      + in(i, j - 1, k) 
+                      + in(i + 1, j, k) 
+                      + in(i, j + 1, k);
+    }
+  }
+  #undef in
+  #undef out 
 }
 
 void launchStencil(int* A0, int* Anext, int nx, int ny, int nz) {
+  dim3 dimGrid(ceil(1.0 * nx / TILE_SIZE), ceil(1.0 * ny / TILE_SIZE), 1);
+  dim3 dimBlock(TILE_SIZE, TILE_SIZE, 1);
 
-  // INSERT CODE HERE
-
+  kernel<<<dimGrid, dimBlock>>>(A0, Anext, nx, ny, nz);
 }
 
 
