@@ -38,16 +38,13 @@ __global__ void mysgemm(int m, int n, int k, const float *A, const float *B, flo
 
   __shared__ float tmpB[S][U];
 
-  for(int offsetIdx = 0 ; offsetIdx < ceil(k * 1.0 / S) ; offsetIdx ++)
+  for(int offset = 0 ; offset < k ; offset+= S)
   {
-    int offset = offsetIdx * S;
     int x = tx % U;
     int y = tx / U;
     tmpB[y][x] = (col + x < n && offset + y < k) ? B(offset + y, col + x) : 0.;
 
     __syncthreads();
-    // if(bx == 0 && by == 0)
-    //     printf("tx: %d, offset: %d, tmp[%d][%d] = %f\n", tx, offset, y, x, tmpB[y][x]);
 
     for(int i = 0 ; i < S ; i ++)
     {
@@ -57,11 +54,6 @@ __global__ void mysgemm(int m, int n, int k, const float *A, const float *B, flo
             for(int u = 0 ; u < U ; u ++)
             {
                 tmpC[u] += valA * tmpB[i][u];
-                // if(row == 0 && col == 0 && u == 8)
-                // {
-                //     printf("valA: %f, tmpB[%d][%d]: %f, tmpC[%d]: %f\n", 
-                //         valA, i, u, tmpB[i][u], u, tmpC[u]);
-                // }
             }
         }
     }
@@ -72,10 +64,6 @@ __global__ void mysgemm(int m, int n, int k, const float *A, const float *B, flo
   {
     for(int u = 0 ; u < U ; u ++)
     {
-        // if(row == 0 && col == 0 && u == 7)
-        // {
-        //     printf("Writing (%d, %d): %f\n", row, col + u, tmpC[u]);
-        // }
         C(row, col + u) = tmpC[u];
     }
   }
