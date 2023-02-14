@@ -3,9 +3,9 @@
 
 #include "template.hu"
 
-#define TILE_SZ_A 128
-#define TILE_SZ_B 16
-#define TILE_SZ_RATIO (TILE_SZ_A/TILE_SZ_B)
+#define T 128
+#define U 16
+#define S (T / U)
 
 __global__ void mysgemm(int m, int n, int k, const float *A, const float *B, float* C) {
 
@@ -29,11 +29,60 @@ __global__ void mysgemm(int m, int n, int k, const float *A, const float *B, flo
 
   // INSERT KERNEL CODE HERE
 
-  // SSL Hint (9/6/21): try using just one register for the tile of A 
-  // rather than several--in other words, load one value (per thread) 
-  // from A and compute using that value rather than loading all values 
-  // before doing the computation.  This approach seems to be slightly 
-  // faster than the alternative.
+  int tx = threadIdx.x;
+  int bx = blockIdx.x;
+  int by = blockIdx.y;
+  int row = bx * T + tx;
+  int col = by * U;
+  float tmpC[U] = {0.};
+
+  __shared__ float tmpB[S][U];
+
+  for(int offsetIdx = 0 ; offsetIdx < ceil(k * 1.0 / S) ; offsetIdx ++)
+  {
+    int offset = offsetIdx * S;
+    int x = tx % U;
+    int y = tx / U;
+    tmpB[y][x] = (col + x < n && offset + y < k) ? B(offset + y, col + x) : 0.;
+
+    __syncthreads();
+    // if(bx == 0 && by == 0)
+    //     printf("tx: %d, offset: %d, tmp[%d][%d] = %f\n", tx, offset, y, x, tmpB[y][x]);
+
+    for(int i = 0 ; i < S ; i ++)
+    {
+        if(row < m && offset + i < k)
+        {
+            float valA = A(row, offset + i); 
+            for(int u = 0 ; u < U ; u ++)
+            {
+                tmpC[u] += valA * tmpB[i][u];
+                // if(row == 0 && col == 0 && u == 8)
+                // {
+                //     printf("valA: %f, tmpB[%d][%d]: %f, tmpC[%d]: %f\n", 
+                //         valA, i, u, tmpB[i][u], u, tmpC[u]);
+                // }
+            }
+        }
+    }
+    __syncthreads();
+  }
+
+  if(row < m)
+  {
+    for(int u = 0 ; u < U ; u ++)
+    {
+        // if(row == 0 && col == 0 && u == 7)
+        // {
+        //     printf("Writing (%d, %d): %f\n", row, col + u, tmpC[u]);
+        // }
+        C(row, col + u) = tmpC[u];
+    }
+  }
+
+  #undef A
+  #undef B
+  #undef C
 }
 
 void basicSgemm(char transa, char transb, int m, int n, int k, float alpha, const float *A, int lda, const float *B, int ldb, float beta, float *C, int ldc)
@@ -65,8 +114,11 @@ void basicSgemm(char transa, char transb, int m, int n, int k, float alpha, cons
     // (A, B, C).
 
     //INSERT CODE HERE
+    dim3 dimGrid(ceil(1.0 * m / T), ceil(1.0 * n / U));
+    dim3 dimBlock(T);
 
     // Invoke CUDA kernel -----------------------------------------------------
+    mysgemm<<<dimGrid, dimBlock>>>(m, n, k, A, B, C);
 
     //INSERT CODE HERE
 
