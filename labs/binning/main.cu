@@ -47,21 +47,81 @@
 
 __global__ void gpu_normal_kernel(float *in_val, float *in_pos, float *out,
                                   int grid_size, int num_in) {
-  //@@ INSERT CODE HERE
+  int tx = threadIdx.x;
+  int bx = blockIdx.x;
+  int idx = bx * blockDim.x + tx;
+
+  float ans = 0;
+  float r = 0;
+
+  if (idx < grid_size)
+  {
+    for (int i = 0; i < num_in; i++)
+    {
+      r = in_pos[i] - idx;
+      ans += in_val[i] * in_val[i] / (r * r);
+    }
+    out[idx] = ans;
+  }
 }
 
 __global__ void gpu_cutoff_kernel(float *in_val, float *in_pos, float *out,
                                   int grid_size, int num_in,
                                   float cutoff2) {
-  //@@ INSERT CODE HERE
+  int tx = threadIdx.x;
+  int bx = blockIdx.x;
+  int idx = bx * blockDim.x + tx;
+
+  float ans = 0;
+  if (idx < grid_size)
+  {
+    for (int i = 0; i < num_in; i++)
+    {
+      float r = in_pos[i] - idx;
+      if(r * r < cutoff2)
+        ans += (in_val[i] * in_val[i]) / (r * r); 
+    }
+    out[idx] = ans;
+  }
 }
 
+#define BLOCK_SIZE 128 
 __global__ void gpu_cutoff_binned_kernel(int *bin_ptrs,
                                          float *in_val_sorted,
                                          float *in_pos_sorted, float *out,
                                          int grid_size, float cutoff2) {
-  //@@ INSERT CODE HERE
+  int tx = threadIdx.x;
+  int bx = blockIdx.x;
+  int idx = bx * blockDim.x + tx;
+  if (idx < grid_size)
+  {
+    float ans = 0.;
+    int binIdxStart = 0;
+    int binIdxEnd = 0;
+    int start = 0;
+    int end = 0;
 
+    float cutoff = sqrt(cutoff2);
+    if(idx - cutoff >= 0)
+      binIdxStart = (idx - cutoff) / grid_size * NUM_BINS;
+
+    if(idx + cutoff < grid_size)
+      binIdxEnd = (idx + cutoff) / grid_size * NUM_BINS;
+    else
+      binIdxEnd = NUM_BINS - 1;
+    
+    start = bin_ptrs[binIdxStart];
+    end = bin_ptrs[binIdxEnd + 1];
+    
+    for (int i = start ;i < end ; i++){
+      float r = idx - in_pos_sorted[i];
+      float r2 = r*r;
+      if (r2 <= cutoff2)
+        ans += in_val_sorted[i] * in_val_sorted[i] / r2;
+    }
+    
+    out[idx] = ans;
+  }
 }
 
 /******************************************************************************
