@@ -15,5 +15,5 @@ commands:
     - cmake /src
     - make
     - ./bfs gq
-    - ./bfs bq
-    - ./bfs wq
+    # - ./bfs bq
+    # - ./bfs wq

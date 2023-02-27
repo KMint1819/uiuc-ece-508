@@ -17,7 +17,7 @@
 /******************************************************************************
  GPU kernels
 *******************************************************************************/
-
+#define uint unsigned int
 __global__ void gpu_global_queueing_kernel(unsigned int *nodePtrs,
                                           unsigned int *nodeNeighbors,
                                           unsigned int *nodeVisited,
@@ -28,9 +28,25 @@ __global__ void gpu_global_queueing_kernel(unsigned int *nodePtrs,
 
   // INSERT KERNEL CODE HERE
   // Loop over all nodes in the current level
-  // Loop over all neighbors of the node
-  // If neighbor hasn't been visited yet
-  // Add neighbor to global queue
+  for(int idx = blockIdx.x * blockDim.x + threadIdx.x ; idx < *numCurrLevelNodes ; idx += gridDim.x * blockDim.x)
+  {
+    uint node = currLevelNodes[idx];
+    uint left = nodePtrs[node];
+    uint right = nodePtrs[node + 1];
+
+    // Loop over all neighbors of the node
+    for(uint j = left ; j < right ; j ++)
+    {
+      // If neighbor hasn't been visited yet
+      // Add neighbor to global queue
+      uint neigh = nodeNeighbors[j];
+      if(!atomicExch(&nodeVisited[neigh], 1))
+      {
+        uint qTop = atomicAdd(numNextLevelNodes, 1);
+        nextLevelNodes[qTop]= neigh;
+      }
+    }
+  }
 }
 
 __global__ void gpu_block_queueing_kernel(unsigned int *nodePtrs,
