@@ -57,18 +57,64 @@ __global__ void gpu_block_queueing_kernel(unsigned int *nodePtrs,
                                          unsigned int *numCurrLevelNodes,
                                          unsigned int *numNextLevelNodes) {
   // INSERT KERNEL CODE HERE
+  int tx = threadIdx.x;
+  int bx = blockIdx.x;
 
   // Initialize shared memory queue (size should be BQ_CAPACITY)
-
+  int idx = bx * blockDim.x + tx;
+  __shared__ uint sharedQueue[BQ_CAPACITY]; 
+  __shared__ uint numSharedQueue;
+  if(tx == 0)
+  {
+      for(int i = 0 ; i < BQ_CAPACITY ; i ++)
+      {
+        sharedQueue[i] = 0;
+      }
+      numSharedQueue = 0;
+  }
+  __syncthreads();
+  
   // Loop over all nodes in the current level
-  // Loop over all neighbors of the node
-  // If neighbor hasn't been visited yet
-  // Add neighbor to block queue
-  // If full, add neighbor to global queue
+  for(; idx < *numCurrLevelNodes ; idx += gridDim.x * blockDim.x)
+  {
+    // Loop over all neighbors of the node
+    uint node = currLevelNodes[idx];
+    uint left = nodePtrs[node];
+    uint right = nodePtrs[node + 1];
+    for(uint i = left ; i < right ; i ++)
+    {
+      uint neigh = nodeNeighbors[i];
+
+      // If neighbor hasn't been visited yet
+      if(!atomicExch(&nodeVisited[neigh], 1))
+      {
+        // If full, add neighbor to global queue
+        uint bqTop = atomicAdd(&numSharedQueue, 1);
+        if(bqTop >= BQ_CAPACITY)
+        {
+          uint gqTop = atomicAdd(numNextLevelNodes, 1);
+          nextLevelNodes[gqTop] = neigh;
+        }
+        else
+        {
+          // Add neighbor to block queue
+          sharedQueue[bqTop] = neigh;
+        }
+      }
+    }
+  }
+  __syncthreads();
 
   // Allocate space for block queue to go into global queue
-
   // Store block queue in global queue
+  if(tx == 0)
+  {
+    for(int i = 0 ; i < numSharedQueue; i ++)
+    {
+      uint gqTop = atomicAdd(numNextLevelNodes, 1);
+      nextLevelNodes[gqTop] = sharedQueue[i];
+    }
+  }
 }
 
 __global__ void gpu_warp_queueing_kernel(unsigned int *nodePtrs,
