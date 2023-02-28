@@ -64,13 +64,11 @@ __global__ void gpu_block_queueing_kernel(unsigned int *nodePtrs,
   int idx = bx * blockDim.x + tx;
   __shared__ uint sharedQueue[BQ_CAPACITY]; 
   __shared__ uint numSharedQueue;
+  __shared__ uint gqTop;
   if(tx == 0)
   {
-      for(int i = 0 ; i < BQ_CAPACITY ; i ++)
-      {
-        sharedQueue[i] = 0;
-      }
-      numSharedQueue = 0;
+    
+    numSharedQueue = 0;
   }
   __syncthreads();
   
@@ -92,8 +90,7 @@ __global__ void gpu_block_queueing_kernel(unsigned int *nodePtrs,
         uint bqTop = atomicAdd(&numSharedQueue, 1);
         if(bqTop >= BQ_CAPACITY)
         {
-          uint gqTop = atomicAdd(numNextLevelNodes, 1);
-          nextLevelNodes[gqTop] = neigh;
+          nextLevelNodes[atomicAdd(numNextLevelNodes, 1)] = neigh;
         }
         else
         {
@@ -106,14 +103,14 @@ __global__ void gpu_block_queueing_kernel(unsigned int *nodePtrs,
   __syncthreads();
 
   // Allocate space for block queue to go into global queue
-  // Store block queue in global queue
   if(tx == 0)
+    gqTop = atomicAdd(numNextLevelNodes, numSharedQueue);
+  __syncthreads(); 
+
+  // Store block queue in global queue
+  for(int i = tx ; i < numSharedQueue; i += blockDim.x)
   {
-    for(int i = 0 ; i < numSharedQueue; i ++)
-    {
-      uint gqTop = atomicAdd(numNextLevelNodes, 1);
-      nextLevelNodes[gqTop] = sharedQueue[i];
-    }
+    nextLevelNodes[gqTop + i] = sharedQueue[i];
   }
 }
 
