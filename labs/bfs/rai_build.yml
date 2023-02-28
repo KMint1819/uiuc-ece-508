@@ -14,6 +14,7 @@ commands:
     - cp -r /src .
     - cmake /src
     - make
-    # - ./bfs gq
+    - ./bfs gq
     - ./bfs bq
-    # - ./bfs wq
+    - ./bfs wq
+    # - cuda-memcheck ./bfs wq

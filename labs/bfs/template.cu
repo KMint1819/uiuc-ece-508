@@ -123,31 +123,111 @@ __global__ void gpu_warp_queueing_kernel(unsigned int *nodePtrs,
                                         unsigned int *numNextLevelNodes) {
 
   // INSERT KERNEL CODE HERE
+  int tx = threadIdx.x;
+  int bx = blockIdx.x;
+  const int idx = bx * BLOCK_SIZE + tx;
+  int laneId = tx % NUM_WARP_QUEUES;
 
   // This version uses NUM_WARP_QUEUES warp queues of capacity 
   // WQ_CAPACITY.  Be sure to interleave them as discussed in lecture.  
+  __shared__ uint wQueue[WQ_CAPACITY][NUM_WARP_QUEUES]; 
+  __shared__ uint numWQueue[NUM_WARP_QUEUES];
 
   // Don't forget that you also need a block queue of capacity BQ_CAPACITY.
+  __shared__ uint bQueue[BQ_CAPACITY];
+  __shared__ uint numBQueue;
 
   // Initialize shared memory queues (warp and block)
+  if(tx < NUM_WARP_QUEUES)
+  {
+    numWQueue[tx] = 0;
+    if(tx == 0)
+      numBQueue = 0;
+  }
+  __syncthreads();
 
   // Loop over all nodes in the current level
-  // Loop over all neighbors of the node
-  // If neighbor hasn't been visited yet
-  // Add neighbor to the queue
-  // If full, add neighbor to block queue
-  // If full, add neighbor to global queue
+  for(int j = bx * BLOCK_SIZE + tx ; j < *numCurrLevelNodes ; j += gridDim.x * blockDim.x)
+  {
+    // printf("Hi i'm j: %d!\n", j);
+    uint node = currLevelNodes[j];
+    uint left = nodePtrs[node];
+    uint right = nodePtrs[node + 1];
 
-  // Allocate space for warp queue to go into block queue
+    // Loop over all neighbors of the node
+    for(int i = left ; i < right ; i ++)
+    {
+      uint neigh = nodeNeighbors[i];
+      // If neighbor hasn't been visited yet
+      if(!atomicExch(&nodeVisited[neigh], 1))
+      {
+        // Add neighbor to the queue
+        uint wqTop = atomicAdd(&numWQueue[laneId], 1);
 
-  // Store warp queues in block queue (use one warp or one thread per queue)
-  // Add any nodes that don't fit (remember, space was allocated above)
-  //    to the global queue
+        if(wqTop < WQ_CAPACITY)
+        {
+          wQueue[wqTop][laneId] = neigh;
+        }
+        else
+        {
+          atomicExch(&numWQueue[laneId], WQ_CAPACITY);
+          uint bqTop = atomicAdd(&numBQueue, 1);
 
-  // Saturate block queue counter (too large if warp queues overflowed)
+          // If full, add neighbor to block queue
+          if(bqTop < BQ_CAPACITY)
+          {
+            bQueue[bqTop] = neigh;
+          }
+          else
+          {
+            // If full, add neighbor to global queue
+            atomicExch(&numBQueue, BQ_CAPACITY);
+            nextLevelNodes[atomicAdd(numNextLevelNodes, 1)] = neigh;
+          }
+        } 
+      }
+    }
+  }
+  __syncthreads();
+
+  if(tx < NUM_WARP_QUEUES)
+  {
+    uint num = numWQueue[laneId];
+    // printf("Number of tx %d, bx %d, lane %d: %d\n", tx, bx, laneId, num);
+
+    for(int i = 0 ; i < num ; i ++)
+    {
+      // Allocate space for warp queue to go into block queue
+      uint bqTop = atomicAdd(&numBQueue, 1);
+      uint val = wQueue[i][laneId];
+      if(bqTop < BQ_CAPACITY) 
+      {
+        // Store warp queues in block queue (use one warp or one thread per queue)
+        bQueue[bqTop] = val;
+      }
+      else
+      {
+        // Add any nodes that don't fit (remember, space was allocated above)
+        // to the global queue
+        nextLevelNodes[atomicAdd(numNextLevelNodes, 1)] = val;
+
+        // Saturate block queue counter (too large if warp queues overflowed)
+        atomicExch(&numBQueue, BQ_CAPACITY);
+      }
+    }
+  }
+  __syncthreads();
+
   // Allocate space for block queue to go into global queue
-
-  // Store block queue in global queue
+  if(idx == 0)
+  {
+    // printf("WRITING!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!1\n");
+    uint gqTop = atomicAdd(numNextLevelNodes, numBQueue);
+    for(int i = 0 ; i < numBQueue ; i ++)
+    {
+      nextLevelNodes[gqTop + i] = bQueue[i];
+    }
+  }
 }
 
 /******************************************************************************
