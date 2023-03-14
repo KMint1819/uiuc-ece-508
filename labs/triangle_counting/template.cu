@@ -96,6 +96,13 @@ __device__ uint64_t binary_search(
   return ans;
 }
 
+__device__ void swap_integer(int& a, int& b)
+{
+  int tmp = a;
+  a = b;
+  b = tmp;
+}
+
 __global__ static void kernel_tc_bs(uint64_t *__restrict__ triangleCounts, //!< per-edge triangle counts
                                  const uint32_t *const edgeSrc,         //!< node ids for edge srcs
                                  const uint32_t *const edgeDst,         //!< node ids for edge dsts
@@ -115,14 +122,13 @@ __global__ static void kernel_tc_bs(uint64_t *__restrict__ triangleCounts, //!< 
   int uEnd = rowPtr[src + 1];
   int vEnd = rowPtr[dst + 1];
   
-  if(uEnd - u < vEnd - v)
+  if(uEnd - u > vEnd - v)
   {
-    triangleCounts[idx] = binary_search(edgeDst, u, v, uEnd, vEnd);
+    swap_integer(u, v);
+    swap_integer(uEnd, vEnd);
   }
-  else
-  {
-    triangleCounts[idx] = binary_search(edgeDst, v, u, vEnd, uEnd);
-  }
+  // if(v >= 64 && )
+  triangleCounts[idx] = binary_search(edgeDst, u, v, uEnd, vEnd);
 }
 
 uint64_t count_triangles(const pangolin::COOView<uint32_t> view, const int mode) {
