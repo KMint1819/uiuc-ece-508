@@ -4,6 +4,39 @@
 
 #include "template.hu"
 
+__device__ uint64_t linear_search(
+  const uint32_t* const edgeDst,
+  int u,
+  int v,
+  int uEnd,
+  int vEnd 
+)
+{
+  uint64_t ans = 0;
+
+  // Determine how many elements of those two arrays are common
+  int w1 = edgeDst[u];
+  int w2 = edgeDst[v];
+  while(u < uEnd && v < vEnd)
+  {
+    if(w1 > w2)
+    {
+      w2 = edgeDst[++ v];
+    }
+    else if(w1 < w2)
+    {
+      w1 = edgeDst[++ u];
+    }
+    else
+    {
+      w1 = edgeDst[++ u];
+      w2 = edgeDst[++ v];
+      ans ++;
+    }
+  }
+  return ans;
+}
+
 __global__ static void kernel_tc(uint64_t *__restrict__ triangleCounts, //!< per-edge triangle counts
                                  const uint32_t *const edgeSrc,         //!< node ids for edge srcs
                                  const uint32_t *const edgeDst,         //!< node ids for edge dsts
@@ -25,28 +58,7 @@ __global__ static void kernel_tc(uint64_t *__restrict__ triangleCounts, //!< per
   int uEnd = rowPtr[src + 1];
   int vEnd = rowPtr[dst + 1];
 
-  // Determine how many elements of those two arrays are common
-  int w1 = edgeDst[u];
-  int w2 = edgeDst[v];
-  uint64_t ans = 0;
-  while(u < uEnd && v < vEnd)
-  {
-    if(w1 > w2)
-    {
-      w2 = edgeDst[++ v];
-    }
-    else if(w1 < w2)
-    {
-      w1 = edgeDst[++ u];
-    }
-    else
-    {
-      w1 = edgeDst[++ u];
-      w2 = edgeDst[++ v];
-      ans ++;
-    }
-  }
-  triangleCounts[idx] = ans;
+  triangleCounts[idx] = linear_search(edgeDst, u, v, uEnd, vEnd);
 }
 
 __global__ void kernel_tc_bs()
