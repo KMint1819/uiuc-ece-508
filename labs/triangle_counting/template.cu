@@ -127,8 +127,36 @@ __global__ static void kernel_tc_bs(uint64_t *__restrict__ triangleCounts, //!< 
     swap_integer(u, v);
     swap_integer(uEnd, vEnd);
   }
-  // if(v >= 64 && )
+  
   triangleCounts[idx] = binary_search(edgeDst, u, v, uEnd, vEnd);
+}
+
+__global__ static void kernel_tc_dynamic(uint64_t *__restrict__ triangleCounts, //!< per-edge triangle counts
+                                        const uint32_t *const edgeSrc,         //!< node ids for edge srcs
+                                        const uint32_t *const edgeDst,         //!< node ids for edge dsts
+                                        const uint32_t *const rowPtr,          //!< source node offsets in edgeDst
+                                        const size_t numEdges                  //!< how many edges to count triangles for
+)
+{
+  int idx = blockDim.x * blockIdx.x + threadIdx.x;
+  if(idx >= numEdges) return;
+
+  int src = edgeSrc[idx];
+  int dst = edgeDst[idx];
+
+  // Use the row pointer array to determine the start and end of the neighbor list in the column index array
+  int u = rowPtr[src];
+  int v = rowPtr[dst];
+  int uEnd = rowPtr[src + 1];
+  int vEnd = rowPtr[dst + 1];
+  
+  if(uEnd - u > vEnd - v)
+  {
+    swap_integer(u, v);
+    swap_integer(uEnd, vEnd);
+  }
+  
+  triangleCounts[idx] = (v >= 64 && v / u >= 6) ? binary_search(edgeDst, u, v, uEnd, vEnd) : linear_search(edgeDst, u, v, uEnd, vEnd);
 }
 
 uint64_t count_triangles(const pangolin::COOView<uint32_t> view, const int mode) {
@@ -151,7 +179,7 @@ uint64_t count_triangles(const pangolin::COOView<uint32_t> view, const int mode)
   else if (mode == 2) 
   {
     //@@ launch the hybrid search kernel here
-    kernel_tc_bs<<<dimGrid, dimBlock>>>(pgl.data(),view.row_ind(), view.col_ind(), view.row_ptr(), view.nnz());
+    kernel_tc_dynamic<<<dimGrid, dimBlock>>>(pgl.data(),view.row_ind(), view.col_ind(), view.row_ptr(), view.nnz());
     cudaDeviceSynchronize();
   }
   else 
