@@ -94,9 +94,6 @@ __global__ void conv_forward_opt_kernel(
   int ty = threadIdx.y;
 
   //@@ YOUR CODE HERE!
-  #define X(i0, i1, i2, i3) x[((i0) * xdims.depth + (i1)) * xdims.height * xdims.width + (i2) * xdims.width + (i3)]
-  #define M(i0, i1, i2, i3) mask[((i0) * wdims.depth + (i1)) * wdims.height * wdims.width + (i2) * wdims.width + (i3)]
-  #define Y(i0, i1, i2, i3) y[((i0) * ydims.depth + (i1)) * ydims.height * ydims.width + (i2) * ydims.width + (i3)]
 
   int wgrid = ceil(1.0 * ydims.width / TILE_WIDTH);
   int b = bz;
@@ -105,37 +102,35 @@ __global__ void conv_forward_opt_kernel(
   int w = (by % wgrid) * TILE_WIDTH + tx;
   int radius = TILE_WIDTH / 2;
 
-  __shared__ float sharedX[1][TILE_WIDTH][TILE_WIDTH];
-  for(int c = 0 ; c < xdims.depth ; c ++)
+  #define X(i0, i1) x[((b)) * xdims.height * xdims.width + (i0) * xdims.width + (i1)]
+  #define M(i0, i1) mask[((m)) * wdims.height * wdims.width + (i0) * wdims.width + (i1)]
+  #define Y(i0, i1, i2, i3) y[((i0) * ydims.depth + (i1)) * ydims.height * ydims.width + (i2) * ydims.width + (i3)]
+
+  __shared__ float sharedX[TILE_WIDTH][TILE_WIDTH];
+  if(h < xdims.height && w < xdims.width)
   {
-    if(h < xdims.height && w < xdims.width)
-    {
-      sharedX[c][ty][tx] = X(b, c, h, w);
-    }
-    else
-    {
-      sharedX[c][ty][tx] = 0.0f;
-    }
+    sharedX[ty][tx] = X(h, w);
+  }
+  else
+  {
+    sharedX[ty][tx] = 0.0f;
   }
   __syncthreads();
 
   float ans = 0.0f;
-  for(int c = 0 ; c < xdims.depth ; c ++)
+  for(int p = 0 ; p < MASK_WIDTH ; p ++)
   {
-    for(int p = 0 ; p < MASK_WIDTH ; p ++)
+    for(int q = 0 ; q < MASK_WIDTH ; q ++)
     {
-      for(int q = 0 ; q < MASK_WIDTH ; q ++)
+      if(h + p < xdims.height && w + q < xdims.width)
       {
-        if(h + p < xdims.height && w + q < xdims.width)
+        if(ty + p < radius || tx + q < radius || ty + p >= TILE_WIDTH - radius || tx + q >= TILE_WIDTH - radius)
         {
-          if(ty + p < radius || tx + q < radius || ty + p >= TILE_WIDTH - radius || tx + q >= TILE_WIDTH - radius)
-          {
-            ans += X(b, c, h + p, w + q) * M(m, c, p, q);
-          }
-          else
-          {
-            ans += sharedX[c][ty + p][tx + q] * M(m, c, p, q);
-          }
+          ans += X(h + p, w + q) * M(p, q);
+        }
+        else
+        {
+          ans += sharedX[ty + p][tx + q] * M(p, q);
         }
       }
     }
