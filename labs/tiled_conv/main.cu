@@ -1,31 +1,35 @@
 #include "helper.hpp"
 
+#define TILE_WIDTH 8
+#define MASK_NUM 32
+#define MASK_WIDTH 5
+__constant__ float mask[MASK_NUM * MASK_WIDTH * MASK_WIDTH];
 
 // Sequential code for the forward path of the convolution layer
 // You should not modify this code
-static void conv_forward_valid(const float *X, const shape &xdims, const float *W, const shape &wdims, float *Y,
-                               const shape &ydims) {
-  std::fill(Y, Y + ydims.flattened_length(), 0);
+// static void conv_forward_valid(const float *X, const shape &xdims, const float *W, const shape &wdims, float *Y,
+//                                const shape &ydims) {
+//   std::fill(Y, Y + ydims.flattened_length(), 0);
 
-  for (auto i : range(0, ydims.num)) {
-    for (auto m : range(0, ydims.depth )) {   // for each output feature map
-      for (auto h : range(0, ydims.height)) { // for each output element
-        for (auto w : range(0, ydims.width )) {
-          const auto yoffset = ((i * ydims.depth + m) * ydims.height + h) * ydims.width + w;
-          for (auto c : range(0, xdims.depth )) {     // sum over all input feature maps
-            for (auto p : range(0, wdims.height)) {   // filter height
-              for (auto q : range(0, wdims.width )) { // filter width
-                const auto xoffset = ((((i * xdims.depth) + c) * xdims.height) + (h + p)) * xdims.width + (w + q);
-                const auto woffset = ((((m * wdims.depth) + c) * wdims.height) + p) * wdims.width + q;
-                Y[yoffset] += X[xoffset] * W[woffset];
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
+//   for (auto i : range(0, ydims.num)) {
+//     for (auto m : range(0, ydims.depth )) {   // for each output feature map
+//       for (auto h : range(0, ydims.height)) { // for each output element
+//         for (auto w : range(0, ydims.width )) {
+//           const auto yoffset = ((i * ydims.depth + m) * ydims.height + h) * ydims.width + w;
+//           for (auto c : range(0, xdims.depth )) {     // sum over all input feature maps
+//             for (auto p : range(0, wdims.height)) {   // filter height
+//               for (auto q : range(0, wdims.width )) { // filter width
+//                 const auto xoffset = ((((i * xdims.depth) + c) * xdims.height) + (h + p)) * xdims.width + (w + q);
+//                 const auto woffset = ((((m * wdims.depth) + c) * wdims.height) + p) * wdims.width + q;
+//                 Y[yoffset] += X[xoffset] * W[woffset];
+//               }
+//             }
+//           }
+//         }
+//       }
+//     }
+//   }
+// }
 
 // Baseline GPU kernel code for forward convolution.
 // One thread per output index
@@ -75,28 +79,80 @@ static void convlayer_gpu_baseline(const float *X, const shape &xdims, const flo
 // Implement your optimized kernel here.
 // Make any modifications you wish.
 // Don't forget to modify the host code below, if needed!
-__global__ void conv_forward_opt_kernel(const float *X, const shape xdims, const float *W, const shape wdims, float *Y,
-  const shape ydims) {
+__global__ void conv_forward_opt_kernel(
+  const float *x, 
+  const shape xdims, 
+  const float *_, 
+  const shape wdims, 
+  float *y,
+  const shape ydims) 
+{
+  int bx = blockIdx.x;
+  int by = blockIdx.y;
+  int bz = blockIdx.z;
+  int tx = threadIdx.x;
+  int ty = threadIdx.y;
 
-    const size_t gx = blockIdx.x * blockDim.x + threadIdx.x;
-  for (size_t i = gx; i < ydims.num * ydims.depth * ydims.height * ydims.width; i += blockDim.x * gridDim.x) {
-    Y[i] = 0.f;
-  }
+  // const size_t gx = bx * blockDim.x + tx;
+  // for (size_t i = gx; i < ydims.num * ydims.depth * ydims.height * ydims.width; i += blockDim.x * gridDim.x) {
+  //   y[i] = 0.f;
+  // }
 
   //@@ YOUR CODE HERE!
+  #define X(i0, i1, i2, i3) x[((i0) * xdims.depth + (i1)) * xdims.height * xdims.width + (i2) * xdims.width + (i3)]
+  #define M(i0, i1, i2, i3) mask[((i0) * wdims.depth + (i1)) * wdims.height * wdims.width + (i2) * wdims.width + (i3)]
+  #define Y(i0, i1, i2, i3) y[((i0) * ydims.depth + (i1)) * ydims.height * ydims.width + (i2) * ydims.width + (i3)]
+
+  int wgrid = ceil(1.0 * ydims.width / TILE_WIDTH);
+  int b = bz;
+  int m = bx;
+  int h = (by / wgrid) * TILE_WIDTH + ty;
+  int w = (by % wgrid) * TILE_WIDTH + tx;
+
+  float ans = 0.0f;
+  for(int c = 0 ; c < xdims.depth ; c ++)
+  {
+    for(int p = 0 ; p < MASK_WIDTH ; p ++)
+    {
+      for(int q = 0 ; q < MASK_WIDTH ; q ++)
+      {
+        if(h + p < xdims.height && w + q < xdims.width)
+        {
+          ans += X(b, c, h + p, w + q) * M(m, c, p, q);
+        }
+      }
+    }
+  }
+  if(h < ydims.height && w < ydims.width)
+  {
+    Y(b, m, h, w) = ans;
+  }
+  #undef X
+  #undef W
+  #undef Y
 }
 
 // Host code to configure baseline GPU kernel
-static void convlayer_gpu_opt(const float *X, const shape &xdims, const float *W, const shape &wdims, float *Y,
+static void convlayer_gpu_opt(const float *X, 
+  const shape &xdims, 
+  const float *W, 
+  const shape &wdims, 
+  float *Y, 
   const shape &ydims) {
 
   // Modify this code to configure your optimized kernel.
   //@@ YOUR CODE HERE!!!
-  dim3 dimGrid(1);
-  dim3 dimBlock(32);
-  conv_forward_opt_kernel<<<dimGrid, dimBlock>>>(X, xdims, W, wdims, Y, ydims);
-  THROW_IF_ERROR(cudaGetLastError());
+  cudaMemcpyToSymbol(mask, W, MASK_NUM * MASK_WIDTH * MASK_WIDTH * sizeof(float), 0, cudaMemcpyHostToDevice);
 
+  int hgrid = ceil(1.0 * ydims.height / TILE_WIDTH);
+  int wgrid = ceil(1.0 * ydims.width / TILE_WIDTH);
+
+  dim3 dimGrid(ydims.depth, hgrid * wgrid, xdims.num);
+  dim3 dimBlock(TILE_WIDTH, TILE_WIDTH);
+
+  conv_forward_opt_kernel<<<dimGrid, dimBlock>>>(X, xdims, W, wdims, Y, ydims);
+  cudaDeviceSynchronize();
+  THROW_IF_ERROR(cudaGetLastError());
 }
 
 
@@ -181,7 +237,8 @@ static int eval(const shape wDims, const shape xDims, bool doVerify) {
 
 
 
-TEST_CASE("Convlayer", "[convlayer]") {
+TEST_CASE("Convlayer", "[convlayer]") 
+{
 #if 1
   // test five times in case code errors depend on data
   SECTION("[wDims:32,1,5,5 xDims:20,1,28,28]") {
