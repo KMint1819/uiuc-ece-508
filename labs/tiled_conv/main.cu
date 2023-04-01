@@ -117,6 +117,7 @@ __global__ void conv_forward_opt_kernel(
   }
   __syncthreads();
 
+  // Use joint register-shared memory access to improve performance
   float ans = 0.0f;
   for(int p = 0 ; p < MASK_WIDTH ; p ++)
   {
