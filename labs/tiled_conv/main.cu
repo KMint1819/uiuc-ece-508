@@ -93,11 +93,6 @@ __global__ void conv_forward_opt_kernel(
   int tx = threadIdx.x;
   int ty = threadIdx.y;
 
-  // const size_t gx = bx * blockDim.x + tx;
-  // for (size_t i = gx; i < ydims.num * ydims.depth * ydims.height * ydims.width; i += blockDim.x * gridDim.x) {
-  //   y[i] = 0.f;
-  // }
-
   //@@ YOUR CODE HERE!
   #define X(i0, i1, i2, i3) x[((i0) * xdims.depth + (i1)) * xdims.height * xdims.width + (i2) * xdims.width + (i3)]
   #define M(i0, i1, i2, i3) mask[((i0) * wdims.depth + (i1)) * wdims.height * wdims.width + (i2) * wdims.width + (i3)]
@@ -108,6 +103,21 @@ __global__ void conv_forward_opt_kernel(
   int m = bx;
   int h = (by / wgrid) * TILE_WIDTH + ty;
   int w = (by % wgrid) * TILE_WIDTH + tx;
+  int radius = TILE_WIDTH / 2;
+
+  __shared__ float sharedX[1][TILE_WIDTH][TILE_WIDTH];
+  for(int c = 0 ; c < xdims.depth ; c ++)
+  {
+    if(h < xdims.height && w < xdims.width)
+    {
+      sharedX[c][ty][tx] = X(b, c, h, w);
+    }
+    else
+    {
+      sharedX[c][ty][tx] = 0.0f;
+    }
+  }
+  __syncthreads();
 
   float ans = 0.0f;
   for(int c = 0 ; c < xdims.depth ; c ++)
@@ -118,7 +128,14 @@ __global__ void conv_forward_opt_kernel(
       {
         if(h + p < xdims.height && w + q < xdims.width)
         {
-          ans += X(b, c, h + p, w + q) * M(m, c, p, q);
+          if(ty + p < radius || tx + q < radius || ty + p >= TILE_WIDTH - radius || tx + q >= TILE_WIDTH - radius)
+          {
+            ans += X(b, c, h + p, w + q) * M(m, c, p, q);
+          }
+          else
+          {
+            ans += sharedX[c][ty + p][tx + q] * M(m, c, p, q);
+          }
         }
       }
     }
