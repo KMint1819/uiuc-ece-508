@@ -1,37 +1,10 @@
 #include "helper.hpp"
 
-#define TILE_WIDTH 8
+#define TILE_WIDTH 32
 #define MASK_NUM 32
 #define MASK_WIDTH 5
 __constant__ float mask[MASK_NUM * MASK_WIDTH * MASK_WIDTH];
 
-// Sequential code for the forward path of the convolution layer
-// You should not modify this code
-// static void conv_forward_valid(const float *X, const shape &xdims, const float *W, const shape &wdims, float *Y,
-//                                const shape &ydims) {
-//   std::fill(Y, Y + ydims.flattened_length(), 0);
-
-//   for (auto i : range(0, ydims.num)) {
-//     for (auto m : range(0, ydims.depth )) {   // for each output feature map
-//       for (auto h : range(0, ydims.height)) { // for each output element
-//         for (auto w : range(0, ydims.width )) {
-//           const auto yoffset = ((i * ydims.depth + m) * ydims.height + h) * ydims.width + w;
-//           for (auto c : range(0, xdims.depth )) {     // sum over all input feature maps
-//             for (auto p : range(0, wdims.height)) {   // filter height
-//               for (auto q : range(0, wdims.width )) { // filter width
-//                 const auto xoffset = ((((i * xdims.depth) + c) * xdims.height) + (h + p)) * xdims.width + (w + q);
-//                 const auto woffset = ((((m * wdims.depth) + c) * wdims.height) + p) * wdims.width + q;
-//                 Y[yoffset] += X[xoffset] * W[woffset];
-//               }
-//             }
-//           }
-//         }
-//       }
-//     }
-//   }
-// }
-
-// Baseline GPU kernel code for forward convolution.
 // One thread per output index
 // You should not modify this kernel as it is used for correctness comparison.
 // Instead, define a new one below
@@ -91,54 +64,65 @@ __global__ void conv_forward_opt_kernel(
   int by = blockIdx.y;
   int bz = blockIdx.z;
   int tx = threadIdx.x;
-  int ty = threadIdx.y;
 
   //@@ YOUR CODE HERE!
 
   int wgrid = ceil(1.0 * ydims.width / TILE_WIDTH);
+  int h_coord = tx / TILE_WIDTH;
+  int w_coord = tx % TILE_WIDTH;
   int b = bz;
   int m = bx;
-  int h = (by / wgrid) * TILE_WIDTH + ty;
-  int w = (by % wgrid) * TILE_WIDTH + tx;
+  int h = (by / wgrid) * TILE_WIDTH + h_coord;
+  int w = (by % wgrid) * TILE_WIDTH + w_coord;
   int radius = TILE_WIDTH / 2;
+  __shared__ float sharedX[TILE_WIDTH * TILE_WIDTH];
 
   #define X(i0, i1) x[((b)) * xdims.height * xdims.width + (i0) * xdims.width + (i1)]
   #define M(i0, i1) mask[((m)) * wdims.height * wdims.width + (i0) * wdims.width + (i1)]
   #define Y(i0, i1, i2, i3) y[((i0) * ydims.depth + (i1)) * ydims.height * ydims.width + (i2) * ydims.width + (i3)]
+  #define SD_X(i0, i1) sharedX[(i0) * TILE_WIDTH + i1] 
 
-  __shared__ float sharedX[TILE_WIDTH][TILE_WIDTH];
   if(h < xdims.height && w < xdims.width)
   {
-    sharedX[ty][tx] = X(h, w);
+    SD_X(h_coord, w_coord) = X(h, w);
   }
   else
   {
-    sharedX[ty][tx] = 0.0f;
+    SD_X(h_coord, w_coord) = 0.0f;
   }
   __syncthreads();
 
   // Use joint register-shared memory access to improve performance
-  float ans = 0.0f;
-  for(int p = 0 ; p < MASK_WIDTH ; p ++)
+  float answers[32] = {0.};
+  for(int offset = 0 ; offset < TILE_WIDTH ; offset ++)
   {
-    for(int q = 0 ; q < MASK_WIDTH ; q ++)
+    float ans = 0.0f;
+    for(int p = 0 ; p < MASK_WIDTH ; p ++)
     {
-      if(h + p < xdims.height && w + q < xdims.width)
+      for(int q = 0 ; q < MASK_WIDTH ; q ++)
       {
-        if(ty + p < radius || tx + q < radius || ty + p >= TILE_WIDTH - radius || tx + q >= TILE_WIDTH - radius)
+        if(h < ydims.height && w_coord + offset < ydims.width)
         {
-          ans += X(h + p, w + q) * M(p, q);
-        }
-        else
-        {
-          ans += sharedX[ty + p][tx + q] * M(p, q);
+          ans += X(h + p, w_coord + offset + q) * M(p, q);
+          // if(h_coord + p < radius || w_coord + q < radius || h_coord + p >= TILE_WIDTH - radius || w_coord + q >= TILE_WIDTH - radius)
+          // {
+          //   ans += X(h + p, w + q) * M(p, q);
+          // }
+          // else
+          // {
+          //   ans += SD_X(h_coord + p, w_coord + q) * M(p, q);
+          // }
         }
       }
     }
+    answers[offset + w_coord] = ans;
   }
-  if(h < ydims.height && w < ydims.width)
+  if(h < ydims.height)
   {
-    Y(b, m, h, w) = ans;
+    for(int i = 0 ; i < ydims.width ; i ++)
+    {
+      Y(b, m, h, i) = answers[i];
+    }
   }
   #undef X
   #undef W
@@ -161,7 +145,7 @@ static void convlayer_gpu_opt(const float *X,
   int wgrid = ceil(1.0 * ydims.width / TILE_WIDTH);
 
   dim3 dimGrid(ydims.depth, hgrid * wgrid, xdims.num);
-  dim3 dimBlock(TILE_WIDTH, TILE_WIDTH);
+  dim3 dimBlock(TILE_WIDTH * TILE_WIDTH);
 
   conv_forward_opt_kernel<<<dimGrid, dimBlock>>>(X, xdims, W, wdims, Y, ydims);
   cudaDeviceSynchronize();
