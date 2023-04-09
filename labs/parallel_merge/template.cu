@@ -113,6 +113,7 @@ __global__ void gpu_merge_tiled_kernel(float* A, int A_len, float* B, int B_len,
 
     for(int counter = 0 ; counter < num_tiles ; counter ++) {
         __syncthreads();
+        // Load tile
         int valid_A_length = min(A_length - A_consumed, TILE_SIZE);
         int valid_B_length = min(B_length - B_consumed, TILE_SIZE);
         int valid_C_length = min(C_length - C_produced, TILE_SIZE);
@@ -124,10 +125,10 @@ __global__ void gpu_merge_tiled_kernel(float* A, int A_len, float* B, int B_len,
         }
         __syncthreads();
 
+        // Define per thread variables
         int per_thread = ceil_div(TILE_SIZE, blockDim.x);
         int thd_k_curr = min(per_thread * tx, valid_C_length);
         int thd_k_next = min(thd_k_curr + per_thread, valid_C_length);
-
         int thd_i_curr = co_rank(thd_k_curr, tileA, valid_A_length, tileB, valid_B_length);
         int thd_i_next = co_rank(thd_k_next, tileA, valid_A_length, tileB, valid_B_length);
         int thd_j_curr = thd_k_curr - thd_i_curr;
@@ -137,6 +138,7 @@ __global__ void gpu_merge_tiled_kernel(float* A, int A_len, float* B, int B_len,
         merge_sequential(&tileA[thd_i_curr], thd_i_next - thd_i_curr, &tileB[thd_j_curr],
                         thd_j_next - thd_j_curr, &C[blk_k_curr + C_produced + thd_k_curr]);
 
+        // Update
         A_consumed += co_rank(valid_C_length, tileA, valid_A_length, tileB, valid_B_length);
         C_produced += valid_C_length;
         B_consumed = C_produced - A_consumed;
