@@ -84,7 +84,7 @@ __global__ void gpu_merge_tiled_kernel(float* A, int A_len, float* B, int B_len,
     int tx = threadIdx.x;
     int bx = blockIdx.x;
 
-    __shared__ float tile[TILE_SIZE * 2];
+    extern __shared__ float tile[];
     float *tileA = &tile[0];
     float *tileB = &tile[TILE_SIZE];
 
@@ -166,7 +166,7 @@ void gpu_basic_merge(float* A, int A_len, float* B, int B_len, float* C) {
 
 void gpu_tiled_merge(float* A, int A_len, float* B, int B_len, float* C) {
   const int numBlocks = 128;
-  gpu_merge_tiled_kernel<<<numBlocks, BLOCK_SIZE>>>(A, A_len, B, B_len, C);
+  gpu_merge_tiled_kernel<<<numBlocks, BLOCK_SIZE, TILE_SIZE * 2 * sizeof(float)>>>(A, A_len, B, B_len, C);
 }
 
 void gpu_circular_buffer_merge(float* A, int A_len, float* B, int B_len, float* C) {
